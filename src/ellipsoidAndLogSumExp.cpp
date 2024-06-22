@@ -10,29 +10,6 @@ EllipsoidAndLogSumExpNLP::EllipsoidAndLogSumExpNLP(const xt::xarray<double>& Q, 
     assert(initial_guess.shape()[0] == n);
 
     optimal_solution_ = xt::zeros<double>({n_});
-
-    app_ = IpoptApplicationFactory();
-    app_->Options()->SetStringValue("linear_solver", "mumps");
-    // app_->Options()->SetIntegerValue("max_iter", 100); // Set the maximum number of iterations
-    app_->Initialize();
-}
-
-void EllipsoidAndLogSumExpNLP::update_initial_guess(const xt::xarray<double>& initial_guess) {
-    assert(initial_guess.shape()[0] == n_);
-    initial_guess_ = initial_guess;
-}
-
-void EllipsoidAndLogSumExpNLP::update_problem_data(const xt::xarray<double>& Q, const xt::xarray<double>& mu,
-                                     const xt::xarray<double>& A, const xt::xarray<double>& b, double kappa){
-    assert(Q.shape()[0] == n_ && Q.shape()[1] == n_);
-    assert(mu.shape()[0] == n_);
-    assert(A.shape()[0] == b.shape()[0] && A.shape()[1] == n_);
-
-    Q_ = Q;
-    mu_ = mu;
-    A_ = A;
-    b_ = b;
-    kappa_ = kappa;
 }
 
 bool EllipsoidAndLogSumExpNLP::get_nlp_info(Index& n, Index& m, Index& nnz_jac_g, Index& nnz_h_lag, 
@@ -182,8 +159,43 @@ void EllipsoidAndLogSumExpNLP::finalize_solution(SolverReturn status, Index n, c
     }
 }
 
-void EllipsoidAndLogSumExpNLP::solve() {
+EllipsoidAndLogSumExpNLPAndSolver::EllipsoidAndLogSumExpNLPAndSolver(const xt::xarray<double>& Q, const xt::xarray<double>& mu,
+          const xt::xarray<double>& A, const xt::xarray<double>& b, double kappa, const xt::xarray<double>& initial_guess, int n){
+    nlp = new EllipsoidAndLogSumExpNLP(Q, mu, A, b, kappa, initial_guess, n);
+
+    app = IpoptApplicationFactory();
+    app->Options()->SetStringValue("linear_solver", "mumps");
+    app->Options()->SetStringValue("sb", "yes");
+    app->Options()->SetIntegerValue("print_level", 0); // Make Ipopt non-verbose
+    app->Options()->SetIntegerValue("file_print_level", 0); // Optional: Also silence file output
+    app->Options()->SetIntegerValue("max_iter", 10); // Set the maximum number of iterations
+    app->Initialize();
+}
+
+void EllipsoidAndLogSumExpNLPAndSolver::update_initial_guess(const xt::xarray<double>& initial_guess) {
+    assert(initial_guess.shape()[0] == nlp->n_);
+    nlp->initial_guess_ = initial_guess;
+}
+
+void EllipsoidAndLogSumExpNLPAndSolver::update_problem_data(const xt::xarray<double>& Q, const xt::xarray<double>& mu,
+                                     const xt::xarray<double>& A, const xt::xarray<double>& b, double kappa){
+    assert(Q.shape()[0] == nlp->n_ && Q.shape()[1] == nlp->n_);
+    assert(mu.shape()[0] == nlp->n_);
+    assert(A.shape()[0] == b.shape()[0] && A.shape()[1] == nlp->n_);
+
+    nlp->Q_ = Q;
+    nlp->mu_ = mu;
+    nlp->A_ = A;
+    nlp->b_ = b;
+    nlp->kappa_ = kappa;
+}
+
+void EllipsoidAndLogSumExpNLPAndSolver::solve() {
     ApplicationReturnStatus status;
-    status = app_->OptimizeTNLP(this);
+    status = app->OptimizeTNLP(nlp);
     assert(status == Solve_Succeeded);
+}
+
+xt::xarray<double> EllipsoidAndLogSumExpNLPAndSolver::get_optimal_solution() {
+    return nlp->optimal_solution_;
 }
