@@ -1,9 +1,18 @@
 cmake_minimum_required(VERSION 3.18..3.20)
 project(IpoptHelper)
 
-# Specify the C++ standard
-# set(CMAKE_CXX_STANDARD 11)
-# set(CMAKE_CXX_STANDARD_REQUIRED True)
+# Set the build type to Debug
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Debug)
+endif()
+
+# Add debug flags
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0 -fsanitize=address,undefined")
+
+# Set the build type to Debug
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Debug)
+endif()
 
 find_package(OpenBLAS REQUIRED)
 find_package(Python REQUIRED COMPONENTS Interpreter Development NumPy)
