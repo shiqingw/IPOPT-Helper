@@ -22,19 +22,19 @@ find_package(xtensor-blas REQUIRED)
 find_package(xtensor-python REQUIRED)
 
 # Detect the operating system and set the library extensions and paths accordingly
+# Set the Ipopt include directories
+set(IPOPT_INCLUDE_DIRS /usr/local/include/coin-or)
+set(IPOPT_LIBRARY_DIRS /usr/local/lib)
 if(APPLE)
-    # Set the Ipopt include directories
-    set(IPOPT_INCLUDE_DIRS /usr/local/include/coin-or)
-    set(IPOPT_LIBRARY_DIRS /usr/local/lib)
     set(LIB_SUFFIX ".dylib")
-    # Manually specify the Ipopt libraries
-    set(IPOPT_LIBRARIES 
-    ${IPOPT_LIBRARY_DIRS}/libipopt${LIB_SUFFIX}
-    ${IPOPT_LIBRARY_DIRS}/libcoinmumps${LIB_SUFFIX}
-    )
 else()
-    find_package(Ipopt REQUIRED)
+    set(LIB_SUFFIX ".so")
 endif()
+# Manually specify the Ipopt libraries
+set(IPOPT_LIBRARIES 
+${IPOPT_LIBRARY_DIRS}/libipopt${LIB_SUFFIX}
+${IPOPT_LIBRARY_DIRS}/libcoinmumps${LIB_SUFFIX}
+)
 
 pybind11_add_module(
     IpoptHelper
