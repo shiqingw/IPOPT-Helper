@@ -1,15 +1,23 @@
 #include "ellipsoidAndLogSumExp.hpp"
 
-EllipsoidAndLogSumExpNLP::EllipsoidAndLogSumExpNLP(const xt::xarray<double>& Q, const xt::xarray<double>& mu,
-          const xt::xarray<double>& A, const xt::xarray<double>& b, double kappa,
-          const xt::xarray<double>& initial_guess, int n)
-    : Q_(Q), mu_(mu), A_(A), b_(b), kappa_(kappa), initial_guess_(initial_guess), n_(n) {
+EllipsoidAndLogSumExpNLP::EllipsoidAndLogSumExpNLP(int n, const xt::xarray<double>& Q, 
+            const xt::xarray<double>& mu, const xt::xarray<double>& A, const xt::xarray<double>& b, 
+            double kappa)
+    : Q_(Q), mu_(mu), A_(A), b_(b), kappa_(kappa), n_(n) {
     assert(Q.shape()[0] == n && Q.shape()[1] == n);
     assert(mu.shape()[0] == n);
     assert(A.shape()[0] == b.shape()[0] && A.shape()[1] == n);
-    assert(initial_guess.shape()[0] == n);
 
-    optimal_solution_ = xt::zeros<double>({n_});
+    initial_guess_x_ = xt::zeros<double>({n_});
+    initial_guess_lambda_ = 0.0;
+    initial_guess_z_L_ = xt::zeros<double>({n_});
+    initial_guess_z_U_ = xt::zeros<double>({n_});
+
+    optimal_solution_x_ = xt::zeros<double>({n_});
+    optimal_solution_lambda_ = 0.0;
+    optimal_solution_z_L_ = xt::zeros<double>({n_});
+    optimal_solution_z_U_ = xt::zeros<double>({n_});
+
 }
 
 bool EllipsoidAndLogSumExpNLP::get_nlp_info(Index& n, Index& m, Index& nnz_jac_g, Index& nnz_h_lag, 
@@ -36,12 +44,23 @@ bool EllipsoidAndLogSumExpNLP::get_bounds_info(Index n, Number* x_l, Number* x_u
 bool EllipsoidAndLogSumExpNLP::get_starting_point(Index n, bool init_x, Number* x, 
                                bool init_z, Number* z_L, Number* z_U, 
                                Index m, bool init_lambda, Number* lambda) {
+    
     assert(init_x == true);
-    assert(init_z == false);
-    assert(init_lambda == false);
     for (Index i = 0; i < n; ++i) {
-        x[i] = initial_guess_(i);
+        x[i] = initial_guess_x_(i);
     }
+
+    if (init_z){
+        for (Index i = 0; i < n; ++i) {
+            z_L[i] = initial_guess_z_L_(i);
+            z_U[i] = initial_guess_z_U_(i);
+        }
+    }
+
+    if (init_lambda){
+        lambda[0] = initial_guess_lambda_;
+    }
+    
     return true;
 }
 
@@ -153,28 +172,50 @@ void EllipsoidAndLogSumExpNLP::finalize_solution(SolverReturn status, Index n, c
                               const Number* lambda, Number obj_value, const IpoptData* ip_data, 
                               IpoptCalculatedQuantities* ip_cq) {
     
-    optimal_solution_ = xt::zeros<double>({n_});
     for (Index i = 0; i < n; ++i) {
-        optimal_solution_(i) = x[i];
+        optimal_solution_x_(i) = x[i];
+        optimal_solution_z_L_(i) = z_L[i];
+        optimal_solution_z_L_(i) = z_U[i];
+        initial_guess_x_(i) = x[i];
+        initial_guess_z_L_(i) = z_L[i];
+        initial_guess_z_U_(i) = z_U[i];
     }
+    optimal_solution_lambda_ = lambda[0];
+    initial_guess_lambda_ = lambda[0];
 }
 
-EllipsoidAndLogSumExpNLPAndSolver::EllipsoidAndLogSumExpNLPAndSolver(const xt::xarray<double>& Q, const xt::xarray<double>& mu,
-          const xt::xarray<double>& A, const xt::xarray<double>& b, double kappa, const xt::xarray<double>& initial_guess, int n){
-    nlp = new EllipsoidAndLogSumExpNLP(Q, mu, A, b, kappa, initial_guess, n);
+EllipsoidAndLogSumExpNLPAndSolver::EllipsoidAndLogSumExpNLPAndSolver(int n, const xt::xarray<double>& Q, const xt::xarray<double>& mu,
+          const xt::xarray<double>& A, const xt::xarray<double>& b, double kappa){
+    nlp = initialize_nlp(n, Q, mu, A, b, kappa);
+    app = initialize_solver();
+}
 
+SmartPtr<EllipsoidAndLogSumExpNLP> EllipsoidAndLogSumExpNLPAndSolver::initialize_nlp(int n, const xt::xarray<double>& Q, const xt::xarray<double>& mu,
+          const xt::xarray<double>& A, const xt::xarray<double>& b, double kappa){
+    nlp = new EllipsoidAndLogSumExpNLP(n, Q, mu, A, b, kappa);
+    return nlp;
+}
+
+SmartPtr<IpoptApplication> EllipsoidAndLogSumExpNLPAndSolver::initialize_solver(){
     app = IpoptApplicationFactory();
     app->Options()->SetStringValue("linear_solver", "mumps");
     app->Options()->SetStringValue("sb", "yes");
     app->Options()->SetIntegerValue("print_level", 0); // Make Ipopt non-verbose
     app->Options()->SetIntegerValue("file_print_level", 0); // Optional: Also silence file output
-    app->Options()->SetIntegerValue("max_iter", 10); // Set the maximum number of iterations
+    // app->Options()->SetIntegerValue("max_iter", 10); // Set the maximum number of iterations
     app->Initialize();
+    return app;
 }
 
-void EllipsoidAndLogSumExpNLPAndSolver::update_initial_guess(const xt::xarray<double>& initial_guess) {
-    assert(initial_guess.shape()[0] == nlp->n_);
-    nlp->initial_guess_ = initial_guess;
+void EllipsoidAndLogSumExpNLPAndSolver::update_initial_guess(const xt::xarray<double>& initial_guess_x, double initial_guess_lambda,
+            const xt::xarray<double>& initial_guess_z_L, const xt::xarray<double>& initial_guess_z_U){
+    assert(initial_guess_x.shape()[0] == nlp->n_);
+    assert(initial_guess_z_L.shape()[0] == nlp->n_);
+    assert(initial_guess_z_U.shape()[0] == nlp->n_);
+    nlp->initial_guess_x_ = initial_guess_x;
+    nlp->initial_guess_lambda_ = initial_guess_lambda;
+    nlp->initial_guess_z_L_ = initial_guess_z_L;
+    nlp->initial_guess_z_U_ = initial_guess_z_U;
 }
 
 void EllipsoidAndLogSumExpNLPAndSolver::update_problem_data(const xt::xarray<double>& Q, const xt::xarray<double>& mu,
@@ -196,6 +237,187 @@ void EllipsoidAndLogSumExpNLPAndSolver::solve() {
     assert(status == Solve_Succeeded);
 }
 
-xt::xarray<double> EllipsoidAndLogSumExpNLPAndSolver::get_optimal_solution() {
-    return nlp->optimal_solution_;
+xt::xarray<double> EllipsoidAndLogSumExpNLPAndSolver::get_optimal_solution_x() {
+    return nlp->optimal_solution_x_;
+}
+
+std::tuple<xt::xarray<double>, double, xt::xarray<double>, xt::xarray<double>> EllipsoidAndLogSumExpNLPAndSolver::get_optimal_solution() {
+    return std::make_tuple(nlp->optimal_solution_x_, nlp->optimal_solution_lambda_, nlp->optimal_solution_z_L_, nlp->optimal_solution_z_U_);
+}
+
+std::tuple<xt::xarray<double>, double, xt::xarray<double>, xt::xarray<double>> EllipsoidAndLogSumExpNLPAndSolver::get_initial_guess() {
+    return std::make_tuple(nlp->initial_guess_x_, nlp->initial_guess_lambda_, nlp->initial_guess_z_L_, nlp->initial_guess_z_U_);
+}
+
+EllipsoidAndLogSumExpNLPAndSolverMultiple::EllipsoidAndLogSumExpNLPAndSolverMultiple(int n_workers, const xt::xarray<double>& all_n, 
+    const xt::xarray<double>& all_Q, const xt::xarray<double>& all_mu, const xt::xarray<double>& all_A, const xt::xarray<double>& all_b, 
+    const xt::xarray<double>& all_kappa){
+    n_workers_ = n_workers;
+    for (int i = 0; i < n_workers; ++i) {
+        int n = all_n(i);
+        xt::xarray<double> Q = xt::view(all_Q, i, xt::all());
+        xt::xarray<double> mu = xt::view(all_mu, i, xt::all());
+        xt::xarray<double> A = xt::view(all_A, i, xt::all(), xt::all());
+        xt::xarray<double> b = xt::view(all_b, i, xt::all());
+        double kappa = all_kappa(i);
+
+        EllipsoidAndLogSumExpNLPAndSolver* e = new EllipsoidAndLogSumExpNLPAndSolver(n, Q, mu, A, b, kappa);
+        nlp_and_solvers_.push_back(e);
+    }
+}
+
+EllipsoidAndLogSumExpNLPAndSolverMultiple::~EllipsoidAndLogSumExpNLPAndSolverMultiple(){
+    for (int i = 0; i < n_workers_; ++i) {
+        delete nlp_and_solvers_[i];
+    }
+}
+
+void EllipsoidAndLogSumExpNLPAndSolverMultiple::update_initial_guess(const xt::xarray<double>& all_initial_guess_x, const xt::xarray<double>& all_initial_guess_lambda,
+        const xt::xarray<double>& all_initial_guess_z_L, const xt::xarray<double>& all_initial_guess_z_U){
+    for (int i = 0; i < n_workers_; ++i) {
+        xt::xarray<double> initial_guess_x = xt::view(all_initial_guess_x, i, xt::all());
+        double initial_guess_lambda = all_initial_guess_lambda(i);
+        xt::xarray<double> initial_guess_z_L = xt::view(all_initial_guess_z_L, i, xt::all());
+        xt::xarray<double> initial_guess_z_U = xt::view(all_initial_guess_z_U, i, xt::all());
+        nlp_and_solvers_[i]->update_initial_guess(initial_guess_x, initial_guess_lambda, initial_guess_z_L, initial_guess_z_U);
+    }
+}
+
+void EllipsoidAndLogSumExpNLPAndSolverMultiple::update_problem_data(const xt::xarray<double>& all_Q, const xt::xarray<double>& all_mu,
+    const xt::xarray<double>& all_A, const xt::xarray<double>& all_b, const xt::xarray<double>& all_kappa){
+    for (int i = 0; i < n_workers_; ++i) {
+        xt::xarray<double> Q = xt::view(all_Q, i, xt::all(), xt::all());
+        xt::xarray<double> mu = xt::view(all_mu, i, xt::all());
+        xt::xarray<double> A = xt::view(all_A, i, xt::all(), xt::all());
+        xt::xarray<double> b = xt::view(all_b, i, xt::all());
+        double kappa = all_kappa(i);
+        nlp_and_solvers_[i]->update_problem_data(Q, mu, A, b, kappa);
+    }
+}
+
+void EllipsoidAndLogSumExpNLPAndSolverMultiple::solve() {
+    std::vector<pid_t> pids(n_workers_);
+    int pipes_x[n_workers_][2];
+    int pipes_lambda[n_workers_][2];
+    int pipes_z_L[n_workers_][2];
+    int pipes_z_U[n_workers_][2];
+
+
+    for (int i = 0; i < n_workers_; ++i) {
+        if (pipe(pipes_x[i]) == -1) {
+            std::cerr << "Failed to create pipe for worker " << i << std::endl;
+            exit(1);
+        }
+
+        if (pipe(pipes_lambda[i]) == -1) {
+            std::cerr << "Failed to create pipe for worker " << i << std::endl;
+            exit(1);
+        }
+
+        if (pipe(pipes_z_L[i]) == -1) {
+            std::cerr << "Failed to create pipe for worker " << i << std::endl;
+            exit(1);
+        }
+
+        if (pipe(pipes_z_U[i]) == -1) {
+            std::cerr << "Failed to create pipe for worker " << i << std::endl;
+            exit(1);
+        }
+
+        pid_t pid = fork();
+        if (pid == 0) {
+            // Child process
+            close(pipes_x[i][0]); // Close read end
+            close(pipes_lambda[i][0]); // Close read end
+            close(pipes_z_L[i][0]); // Close read end
+            close(pipes_z_U[i][0]); // Close read end
+            nlp_and_solvers_[i]->solve();
+
+            // Write results to pipe
+            xt::xarray<double> optimal_solution_x, optimal_solution_z_L, optimal_solution_z_U;
+            double optimal_solution_lambda;
+            std::tie(optimal_solution_x, optimal_solution_lambda, optimal_solution_z_L, optimal_solution_z_U) = nlp_and_solvers_[i]->get_optimal_solution();
+            write(pipes_x[i][1], optimal_solution_x.data(), optimal_solution_x.size() * sizeof(double));
+            write(pipes_lambda[i][1], &optimal_solution_lambda, sizeof(double));
+            write(pipes_z_L[i][1], optimal_solution_z_L.data(), optimal_solution_z_L.size() * sizeof(double));
+            write(pipes_z_U[i][1], optimal_solution_z_U.data(), optimal_solution_z_U.size() * sizeof(double));
+            close(pipes_x[i][1]);
+            close(pipes_lambda[i][1]);
+            close(pipes_z_L[i][1]);
+            close(pipes_z_U[i][1]);
+            _exit(0); // Exit child process
+        } else if (pid > 0) {
+            // Parent process
+            close(pipes_x[i][1]); // Close write end
+            close(pipes_lambda[i][1]); // Close write end
+            close(pipes_z_L[i][1]); // Close write end
+            close(pipes_z_U[i][1]); // Close write end
+            pids[i] = pid;
+        } else {
+            std::cerr << "Failed to fork process for worker " << i << std::endl;
+            exit(1);
+        }
+    }
+
+    // Wait for all child processes to complete and read results
+    for (int i = 0; i < n_workers_; ++i) {
+        int status;
+        pid_t waited_pid = waitpid(pids[i], &status, 0);
+        if (waited_pid == -1) {
+            std::cerr << "Error waiting for process " << pids[i] << std::endl;
+        } else if (WIFEXITED(status)) {
+            // Read results from pipe
+            read(pipes_x[i][0], nlp_and_solvers_[i]->nlp->optimal_solution_x_.data(), nlp_and_solvers_[i]->nlp->optimal_solution_x_.size() * sizeof(double));
+            read(pipes_lambda[i][0], &nlp_and_solvers_[i]->nlp->optimal_solution_lambda_, sizeof(double));
+            read(pipes_z_L[i][0], nlp_and_solvers_[i]->nlp->optimal_solution_z_L_.data(), nlp_and_solvers_[i]->nlp->optimal_solution_z_L_.size() * sizeof(double));
+            read(pipes_z_U[i][0], nlp_and_solvers_[i]->nlp->optimal_solution_z_U_.data(), nlp_and_solvers_[i]->nlp->optimal_solution_z_U_.size() * sizeof(double));
+            close(pipes_x[i][0]);
+            close(pipes_lambda[i][0]);
+            close(pipes_z_L[i][0]);
+            close(pipes_z_U[i][0]);
+        } else if (WIFSIGNALED(status)) {
+            std::cerr << "Process " << waited_pid << " killed by signal " << WTERMSIG(status) << std::endl;
+        }
+    }
+}
+
+xt::xarray<double> EllipsoidAndLogSumExpNLPAndSolverMultiple::get_optimal_solution_x() {
+    xt::xarray<double> all_optimal_solution_x = xt::zeros<double>({n_workers_, nlp_and_solvers_[0]->nlp->n_});
+    for (int i = 0; i < n_workers_; ++i) {
+        xt::view(all_optimal_solution_x, i, xt::all()) = nlp_and_solvers_[i]->get_optimal_solution_x();
+    }
+    return all_optimal_solution_x;
+}
+
+std::tuple<xt::xarray<double>, xt::xarray<double>, xt::xarray<double>, xt::xarray<double>> EllipsoidAndLogSumExpNLPAndSolverMultiple::get_optimal_solution(){
+    xt::xarray<double> all_optimal_solution_x = xt::zeros<double>({n_workers_, nlp_and_solvers_[0]->nlp->n_});
+    xt::xarray<double> all_optimal_solution_lambda = xt::zeros<double>({n_workers_});
+    xt::xarray<double> all_optimal_solution_z_L = xt::zeros<double>({n_workers_, nlp_and_solvers_[0]->nlp->n_});
+    xt::xarray<double> all_optimal_solution_z_U = xt::zeros<double>({n_workers_, nlp_and_solvers_[0]->nlp->n_});
+    for (int i = 0; i < n_workers_; ++i) {
+        xt::view(all_optimal_solution_x, i, xt::all()) = nlp_and_solvers_[i]->get_optimal_solution_x();
+        all_optimal_solution_lambda(i) = nlp_and_solvers_[i]->nlp->optimal_solution_lambda_;
+        xt::view(all_optimal_solution_z_L, i, xt::all()) = nlp_and_solvers_[i]->nlp->optimal_solution_z_L_;
+        xt::view(all_optimal_solution_z_U, i, xt::all()) = nlp_and_solvers_[i]->nlp->optimal_solution_z_U_;
+    }
+    return std::make_tuple(all_optimal_solution_x, all_optimal_solution_lambda, all_optimal_solution_z_L, all_optimal_solution_z_U);
+}
+
+std::tuple<xt::xarray<double>, xt::xarray<double>, xt::xarray<double>, xt::xarray<double>> EllipsoidAndLogSumExpNLPAndSolverMultiple::get_initial_guess(){
+    xt::xarray<double> all_initial_guess_x = xt::zeros<double>({n_workers_, nlp_and_solvers_[0]->nlp->n_});
+    xt::xarray<double> all_initial_guess_lambda = xt::zeros<double>({n_workers_});
+    xt::xarray<double> all_initial_guess_z_L = xt::zeros<double>({n_workers_, nlp_and_solvers_[0]->nlp->n_});
+    xt::xarray<double> all_initial_guess_z_U = xt::zeros<double>({n_workers_, nlp_and_solvers_[0]->nlp->n_});
+    for (int i = 0; i < n_workers_; ++i) {
+        xt::xarray<double> initial_guess_x;
+        double initial_guess_lambda;
+        xt::xarray<double> initial_guess_z_L;
+        xt::xarray<double> initial_guess_z_U;
+        std::tie(initial_guess_x, initial_guess_lambda, initial_guess_z_L, initial_guess_z_U) = nlp_and_solvers_[i]->get_initial_guess();
+        xt::view(all_initial_guess_x, i, xt::all()) = initial_guess_x;
+        all_initial_guess_lambda(i) = initial_guess_lambda;
+        xt::view(all_initial_guess_z_L, i, xt::all()) = initial_guess_z_L;
+        xt::view(all_initial_guess_z_U, i, xt::all()) = initial_guess_z_U;
+    }
+    return std::make_tuple(all_initial_guess_x, all_initial_guess_lambda, all_initial_guess_z_L, all_initial_guess_z_U);
 }

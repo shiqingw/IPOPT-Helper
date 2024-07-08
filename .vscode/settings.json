@@ -50,6 +50,24 @@
         "atomic": "cpp",
         "exception": "cpp",
         "system_error": "cpp",
-        "thread": "cpp"
+        "thread": "cpp",
+        "__hash_table": "cpp",
+        "charconv": "cpp",
+        "cstdarg": "cpp",
+        "cwctype": "cpp",
+        "deque": "cpp",
+        "execution": "cpp",
+        "forward_list": "cpp",
+        "fstream": "cpp",
+        "future": "cpp",
+        "iomanip": "cpp",
+        "list": "cpp",
+        "optional": "cpp",
+        "regex": "cpp",
+        "stack": "cpp",
+        "typeindex": "cpp",
+        "unordered_set": "cpp",
+        "variant": "cpp",
+        "valarray": "cpp"
     }
 }
